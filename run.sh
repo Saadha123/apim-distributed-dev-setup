@@ -204,6 +204,20 @@ setup_packs() {
     echo "Pack setup completed"
 }
 
+wait_for_shutdown() {
+    pid_file="$1"
+    name="$2"
+    if [ ! -f "$pid_file" ]; then
+        return
+    fi
+    pid=$(cat "$pid_file")
+    echo "Waiting for $name (pid $pid) to stop..."
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 2
+    done
+    echo "$name stopped"
+}
+
 stop_services() {
     print_title "Stopping apim-acp"
     sh ./components/wso2am-acp/bin/api-cp.sh --stop
@@ -211,6 +225,11 @@ stop_services() {
     sh ./components/wso2am-tm/bin/traffic-manager.sh --stop
     print_title "Stopping apim-universal-gw"
     sh ./components/wso2am-universal-gw/bin/gateway.sh --stop
+
+    # Wait for carbon processes to fully exit before tearing down containers
+    wait_for_shutdown ./components/wso2am-acp/wso2carbon.pid apim-acp
+    wait_for_shutdown ./components/wso2am-tm/wso2carbon.pid apim-tm
+    wait_for_shutdown ./components/wso2am-universal-gw/wso2carbon.pid apim-universal-gw
 
     # Stop docker containers
     docker-compose down
@@ -345,30 +364,39 @@ fi
 
 # Start apim-acp
 print_title "Starting apim-acp"
-sh ./components/wso2am-acp/bin/api-cp.sh > logs/apim-acp.log 2>&1 &
+sh ./components/wso2am-acp/bin/api-cp.sh start
 if [ $? -ne 0 ]; then
     echo "Error starting apim-acp. Exiting."
     exit $?
 fi
+
+tail -f -n 5 "$(pwd)/components/wso2am-acp/repository/logs/wso2carbon.log" > logs/apim-acp.log 2>/dev/null &
+
 # Wait until apim-acp is fully started and responding
 wait_for_service_start "apim-acp" 0
 
 # Start apim-tm
 print_title "Starting apim-tm"
-sh ./components/wso2am-tm/bin/traffic-manager.sh -DportOffset=1 > logs/apim-tm.log 2>&1 &
+sh ./components/wso2am-tm/bin/traffic-manager.sh start -DportOffset=1
 if [ $? -ne 0 ]; then
     echo "Error starting apim-tm. Exiting."
     exit $?
 fi
+
+tail -f -n 5 "$(pwd)/components/wso2am-tm/repository/logs/wso2carbon.log" > logs/apim-tm.log 2>/dev/null &
+
 # Wait until apim-tm is fully started and responding
 wait_for_service_start "apim-tm" 1
 
 # Start apim-universal-gw
 print_title "Starting apim-universal-gw"
-sh ./components/wso2am-universal-gw/bin/gateway.sh -DportOffset=2 > logs/apim-universal-gw.log 2>&1 &
+sh ./components/wso2am-universal-gw/bin/gateway.sh start -DportOffset=2
 if [ $? -ne 0 ]; then
     echo "Error starting apim-universal-gw. Exiting."
     exit $?
 fi
+
+tail -f -n 5 "$(pwd)/components/wso2am-universal-gw/repository/logs/wso2carbon.log" > logs/apim-universal-gw.log 2>/dev/null &
+
 # Wait until apim-universal-gw is fully started and responding
 wait_for_service_start "apim-universal-gw" 2
